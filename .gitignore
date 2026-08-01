@@ -1,0 +1,27 @@
+# Maven
+target/
+
+# IDEA
+.idea/
+*.iml
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+
+# Redis
+dump.rdb
+
+# Docker data
+mysql-data/
+redis-data/
+
+# Compiled files
+*.class

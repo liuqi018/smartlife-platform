@@ -1,0 +1,53 @@
+server:
+  port: 8081
+spring:
+  application:
+    name: smartlife
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3307/hmdp?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&characterEncoding=utf8
+    username: root
+    password: 1234
+  redis:
+    host: 127.0.0.1
+    port: 6379
+    password: 1234
+    database: 0
+    lettuce:
+      pool:
+        max-active: 10
+        max-idle: 10
+        min-idle: 1
+        time-between-eviction-runs: 10s
+  jackson:
+    default-property-inclusion: non_null # JSON处理时忽略非空字段
+mybatis-plus:
+  type-aliases-package: com.smartlife.entity # 别名扫描包
+logging:
+  level:
+    com.smartlife: debug
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,threaddump
+  endpoint:
+    health:
+      show-details: always
+
+fault:
+  redis-enabled: true
+
+  cpu:
+    threads: 0
+    target-usage: 1.0
+    oversubscribe-ratio: 1.25
+  oom:
+    enabled: true
+    block-size: 8388608
+    allocation-interval-millis: 200
+    target-heap-usage: 0.93
+  mysql-slow-enabled: true
+  mysql-slow-millis: 3000
+  mysql-slow-interval-millis: 200

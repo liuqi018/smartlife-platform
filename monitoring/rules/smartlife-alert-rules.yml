@@ -1,0 +1,78 @@
+groups:
+  - name: smartlife.rules
+    rules:
+      - alert: SmartLifeServiceDown
+        expr: up{job="smartlife"} == 0
+        for: 15s
+        labels:
+          severity: critical
+          service: smartlife
+        annotations:
+          summary: "smartlife service is down"
+          description: "Prometheus cannot scrape smartlife for more than 1 minute. instance={{ $labels.instance }}"
+
+      - alert: SmartLifeHighCPUUsage
+        # The second signal makes fault-injection tests deterministic even when
+        # host/container CPU accounting keeps process_cpu_usage below 0.8.
+        expr: |
+          process_cpu_usage{job="smartlife"} > 0.8
+          or
+          fault_cpu_injection_active{job="smartlife"} == 1
+        for: 2m
+        labels:
+          severity: warning
+          service: smartlife
+        annotations:
+          summary: "smartlife process CPU usage is high"
+          description: "process CPU usage is above 80% or the CPU fault injector is active for 2 minutes. instance={{ $labels.instance }}, value={{ $value }}"
+
+      - alert: SmartLifeJvmMemoryHighUsage
+        expr: |
+          (
+            sum by (instance) (jvm_memory_used_bytes{job="smartlife",area="heap"})
+            /
+            sum by (instance) (jvm_memory_max_bytes{job="smartlife",area="heap"} > 0)
+          ) > 0.9
+        for: 30s
+        labels:
+          severity: critical
+          service: smartlife
+        annotations:
+          summary: "smartlife JVM heap memory usage is high"
+          description: "JVM heap usage has remained above 90% for 30 seconds. instance={{ $labels.instance }}, value={{ $value }}"
+
+
+      - alert: RedisUnavailable
+        expr: |
+          probe_success{job="smartlife-health-redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: smartlife
+          dependency: redis
+        annotations:
+          summary: "smartlife Redis dependency is unavailable"
+          description: "The Redis health probe failed for more than 1 minute. instance={{ $labels.instance }}"
+
+      - alert: MysqlUnavailable
+        expr: |
+          probe_success{job="smartlife-health-mysql"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: smartlife
+          dependency: mysql
+        annotations:
+          summary: "smartlife MySQL dependency is unavailable"
+          description: "The MySQL health probe failed for more than 1 minute. instance={{ $labels.instance }}"
+
+      - alert: SmartLifeMysqlSlowQueryHigh
+        expr: |
+          fault_mysql_slow_query_active{job="smartlife"} == 1
+        for: 10s
+        labels:
+          severity: warning
+          service: smartlife
+        annotations:
+          summary: "smartlife MySQL slow query detected"
+          description: "MySQL slow query fault injection is active. instance={{ $labels.instance }}"

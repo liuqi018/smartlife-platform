@@ -1,0 +1,73 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: smartlife-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: 1234
+      MYSQL_DATABASE: hmdp
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:3307:3306"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    volumes:
+      - smartlife-mysql-data:/var/lib/mysql
+      - ./src/main/resources/db/smartlife.sql:/docker-entrypoint-initdb.d/01-smartlife.sql:ro
+
+  redis:
+    image: redis:7
+    container_name: smartlife-redis
+    restart: unless-stopped
+    command: redis-server --requirepass 1234
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - smartlife-redis-data:/data
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: smartlife-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/rules:/etc/prometheus/rules:ro
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: smartlife-alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:latest
+    container_name: smartlife-blackbox-exporter
+    restart: unless-stopped
+    ports:
+      - "9115:9115"
+    volumes:
+      - ./monitoring/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: smartlife-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    volumes:
+      - smartlife-grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+
+volumes:
+  smartlife-mysql-data:
+  smartlife-redis-data:
+  smartlife-grafana-data:
