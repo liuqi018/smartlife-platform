@@ -27,6 +27,18 @@ services:
     volumes:
       - smartlife-redis-data:/data
 
+  smartlife-app:
+    build: .
+    container_name: smartlife-app
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      - mysql
+      - redis
+
   prometheus:
     image: prom/prometheus:latest
     container_name: smartlife-prometheus

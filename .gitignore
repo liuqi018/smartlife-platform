@@ -1,27 +1,71 @@
-# Maven
+# Maven build output
 target/
+*.class
 
-# IDEA
+# IntelliJ IDEA
 .idea/
 *.iml
+*.iws
+*.ipr
+out/
 
-# Logs
+# Logs and JVM crash reports
 *.log
 logs/
+log/
+hs_err_pid*
+replay_pid*
 
-# OS
-.DS_Store
-Thumbs.db
+# Temporary and backup files
+tmp/
+temp/
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.bak
 
-# Environment
-.env
+# Local application data and uploaded files
+data/
+uploads/
+upload/
+work/
+*.pid
 
-# Redis
-dump.rdb
-
-# Docker data
+# Local Docker bind-mount / volume data
+docker-data/
+volumes/
 mysql-data/
 redis-data/
+grafana-data/
+prometheus-data/
+alertmanager-data/
+dump.rdb
+appendonly.aof
 
-# Compiled files
-*.class
+# Local environment and sensitive configuration
+.env
+.env.*
+!.env.example
+!.env.template
+src/main/resources/application-local.yml
+src/main/resources/application-local.yaml
+src/main/resources/application-local.properties
+src/main/resources/application-secret.yml
+src/main/resources/application-secret.yaml
+src/main/resources/application-secret.properties
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor settings
+.vscode/
+*.code-workspace
