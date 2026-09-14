@@ -2,6 +2,7 @@ package com.smartlife.service;
 
 import com.smartlife.dto.Result;
 import com.smartlife.entity.Blog;
+import com.smartlife.dto.BlogUpdateDTO;
 import com.baomidou.mybatisplus.extension.service.IService;
 
 /**
@@ -25,4 +26,16 @@ public interface IBlogService extends IService<Blog> {
     Result saveBlog(Blog blog);
 
     Result queryBlogOfFollow(Long max, Integer offset);
+
+    Result queryMyBlogs(Integer current);
+
+    Result collectBlog(Long blogId);
+
+    Result updateBlog(Long blogId, BlogUpdateDTO request);
+
+    Result updateVisibility(Long blogId, Integer visibility);
+
+    Result deleteBlog(Long blogId);
+
+    boolean canCurrentUserView(Blog blog);
 }

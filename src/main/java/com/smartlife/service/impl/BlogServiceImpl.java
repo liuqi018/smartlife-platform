@@ -6,21 +6,30 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.smartlife.dto.Result;
 import com.smartlife.dto.ScrollResult;
 import com.smartlife.dto.UserDTO;
+import com.smartlife.dto.BlogUpdateDTO;
 import com.smartlife.entity.Blog;
 import com.smartlife.entity.Follow;
 import com.smartlife.entity.User;
+import com.smartlife.mapper.BlogCollectionMapper;
+import com.smartlife.mapper.BlogCommentsMapper;
+import com.smartlife.mapper.BlogLikeMapper;
 import com.smartlife.mapper.BlogMapper;
 import com.smartlife.service.IBlogService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.smartlife.service.IFollowService;
+import com.smartlife.service.IShopService;
 import com.smartlife.service.IUserService;
 import com.smartlife.utils.RedisConstants;
 import com.smartlife.utils.SystemConstants;
 import com.smartlife.utils.UserHolder;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import javax.annotation.Resource;
 import java.util.ArrayList;
@@ -37,6 +46,7 @@ import java.util.stream.Collectors;
  * @since 2021-12-22
  */
 @Service
+@Slf4j
 public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IBlogService {
 
     @Resource
@@ -45,6 +55,14 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     private StringRedisTemplate stringRedisTemplate;
     @Resource
     private IFollowService followService;
+    @Resource
+    private IShopService shopService;
+    @Resource
+    private BlogCollectionMapper blogCollectionMapper;
+    @Resource
+    private BlogCommentsMapper blogCommentsMapper;
+    @Resource
+    private BlogLikeMapper blogLikeMapper;
 
     @Override
     public Result queryBlogByid(Long id) {
@@ -53,10 +71,14 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         if(blog==null){
             return Result.fail("博客不存在");
         }
+        if (!canCurrentUserView(blog)) {
+            return Result.fail("博客不存在或无权访问");
+        }
         //2.查询blog有关的用户
         queryBlogUser(blog);
         //3.查询blog是否被点赞
         isBlogLiked(blog);
+        setCurrentUserState(blog);
         return Result.ok(blog);
     }
     //分页查询
@@ -64,6 +86,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     public Result queryHotBlog(Integer current) {
         // 根据用户查询
         Page<Blog> page = this.query()
+                .eq("visibility", 0)
                 .orderByDesc("liked")
                 .page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
         // 获取当前页数据
@@ -75,46 +98,199 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         });
         return Result.ok(records);
     }
+
+    @Override
+    public Result queryMyBlogs(Integer current) {
+        UserDTO user = UserHolder.getUser();
+        if (user == null) return Result.fail("请先登录");
+        int pageNumber = current == null || current < 1 ? 1 : current;
+        Page<Blog> page = query().eq("user_id", user.getId())
+                .orderByDesc("create_time").orderByDesc("id")
+                .page(new Page<>(pageNumber, SystemConstants.MAX_PAGE_SIZE));
+        return Result.ok(page.getRecords());
+    }
     private void isBlogLiked(Blog blog) {
         UserDTO user=UserHolder.getUser();
         if(user==null){
+            blog.setIsLike(false);
+            blog.setLikedByCurrentUser(false);
             return ;
         }
         //1.获取当前用户 但是不一定有 用户未登录不用获取用户id
-        Long userId = UserHolder.getUser().getId();
+        Long userId = user.getId();
         //2.判断当前用户有没有点赞   也就是set集合中有没有用户的Id就得先获取当前用户
         String key= RedisConstants.BLOG_LIKED_KEY+blog.getId();
-        Double score = stringRedisTemplate.opsForZSet().score(key, userId.toString());
-        blog.setIsLike(score!=null);
+        Double score = null;
+        try {
+            score = stringRedisTemplate.opsForZSet().score(key, userId.toString());
+        } catch (Exception e) {
+            log.warn("redis blog like cache query failed,blogId={},userId={},errorType={},error={}",
+                    blog.getId(), userId, e.getClass().getSimpleName(), e.getMessage());
+        }
+        boolean liked = score != null;
+        if (!liked) {
+            liked = blogLikeMapper.countByUserAndBlog(userId, blog.getId()) > 0;
+            if (liked) {
+                updateLikeCache(key, userId, true, System.currentTimeMillis());
+            }
+        }
+        blog.setIsLike(liked);
+        blog.setLikedByCurrentUser(liked);
+    }
+
+    private void setCurrentUserState(Blog blog) {
+        UserDTO user = UserHolder.getUser();
+        if (user == null) {
+            blog.setCollectedByCurrentUser(false);
+            blog.setIsOwner(false);
+            return;
+        }
+        blog.setCollectedByCurrentUser(blogCollectionMapper.countByUserAndBlog(user.getId(), blog.getId()) > 0);
+        blog.setIsOwner(user.getId().equals(blog.getUserId()));
     }
    //实现一个人只能改一个笔记点赞一次
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Result likeBlog(Long id) {
-        //1.获取当前用户
-        Long userId = UserHolder.getUser().getId();
-        //2.判断当前用户有没有点赞   也就是set集合中有没有用户的Id就得先获取当前用户
+        UserDTO user = UserHolder.getUser();
+        if (user == null) return Result.fail("请先登录");
+        Blog target = getById(id);
+        if (target == null || !canCurrentUserView(target)) return Result.fail("笔记不存在或无权访问");
+
+        Long userId = user.getId();
         String key = RedisConstants.BLOG_LIKED_KEY + id;
-        Double score= stringRedisTemplate.opsForZSet().score(key, userId.toString());
-        //3.如果没有点赞 可以点赞
-        if (score==null) {//3.1数据库点赞数加一
-            boolean success = update().setSql("liked=liked+1").eq("id", id).update();
-            if (success) {//点赞成功了就往Redis中写
-                //3.2保存用户到Redis的set集合
-                stringRedisTemplate.opsForZSet().add(key, userId.toString(),System.currentTimeMillis());
+        boolean alreadyLiked = blogLikeMapper.countByUserAndBlog(userId, id) > 0;
+        if (!alreadyLiked) {
+            int inserted = blogLikeMapper.insertIgnore(userId, id);
+            if (inserted == 1 && baseMapper.incrementLiked(id) != 1) {
+                throw new IllegalStateException("笔记点赞数更新失败");
             }
+            updateLikeCacheAfterCommit(key, userId, true, System.currentTimeMillis());
+            return Result.ok();
         }
-        else {//4.如果已经点赞，取消点赞 //4.1数据库点赞数-1
-                boolean isSuccess = update().setSql("liked=liked-1").eq("id", id).update();
-                if (isSuccess) {
-                    //4.2把用户从Redis的set集合移除
-                    stringRedisTemplate.opsForZSet().remove(key, userId.toString());
-                }
-            }
+
+        int deleted = blogLikeMapper.deleteByUserAndBlog(userId, id);
+        if (deleted == 1) {
+            baseMapper.decrementLikedSafely(id);
+        }
+        updateLikeCacheAfterCommit(key, userId, false, 0L);
         return Result.ok();
+    }
+
+    private void updateLikeCacheAfterCommit(String key, Long userId, boolean liked, long score) {
+        Runnable cacheUpdate = () -> updateLikeCache(key, userId, liked, score);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    cacheUpdate.run();
+                }
+            });
+        } else {
+            cacheUpdate.run();
+        }
+    }
+
+    private void updateLikeCache(String key, Long userId, boolean liked, long score) {
+        try {
+            if (liked) {
+                stringRedisTemplate.opsForZSet().add(key, userId.toString(), score);
+            } else {
+                stringRedisTemplate.opsForZSet().remove(key, userId.toString());
+            }
+        } catch (Exception e) {
+            log.warn("redis blog like cache update failed,key={},userId={},liked={},errorType={},error={}",
+                    key, userId, liked, e.getClass().getSimpleName(), e.getMessage(), e);
+        }
+    }
+
+    @Override
+    @Transactional
+    public Result collectBlog(Long blogId) {
+        UserDTO user = UserHolder.getUser();
+        if (user == null) {
+            return Result.fail("请先登录");
+        }
+        Blog blog = getById(blogId);
+        if (blog == null || !canCurrentUserView(blog)) {
+            return Result.fail("博客不存在或无权访问");
+        }
+        if (blogCollectionMapper.countByUserAndBlog(user.getId(), blogId) > 0) {
+            blogCollectionMapper.deleteByUserAndBlog(user.getId(), blogId);
+            return Result.ok(false);
+        }
+        blogCollectionMapper.insertIgnore(user.getId(), blogId);
+        return Result.ok(true);
+    }
+
+    @Override
+    public Result updateBlog(Long blogId, BlogUpdateDTO request) {
+        UserDTO user = UserHolder.getUser();
+        if (user == null) return Result.fail("请先登录");
+        Blog existing = getById(blogId);
+        if (existing == null) return Result.fail("博客不存在");
+        if (!user.getId().equals(existing.getUserId())) return Result.fail("无权操作该笔记");
+        if (request == null || StrUtil.isBlank(request.getTitle()) || StrUtil.isBlank(request.getContent())) {
+            return Result.fail("标题和正文不能为空");
+        }
+        String title = request.getTitle().trim();
+        String content = request.getContent().trim();
+        if (title.length() > 255 || content.length() > 2048) return Result.fail("标题或正文过长");
+        if (request.getShopId() == null || shopService.getById(request.getShopId()) == null) {
+            return Result.fail("关联商户不存在");
+        }
+        String images = request.getImages() == null ? "" : request.getImages().trim();
+        if (images.length() > 2048) return Result.fail("图片地址过长");
+        boolean updated = update().set("title", title).set("content", content)
+                .set("images", images).set("shop_id", request.getShopId())
+                .setSql("update_time = NOW()")
+                .eq("id", blogId).eq("user_id", user.getId()).update();
+        return updated ? queryBlogByid(blogId) : Result.fail("笔记更新失败");
+    }
+
+    @Override
+    public Result updateVisibility(Long blogId, Integer visibility) {
+        UserDTO user = UserHolder.getUser();
+        if (user == null) return Result.fail("请先登录");
+        if (visibility == null || (visibility != 0 && visibility != 1)) {
+            return Result.fail("可见性参数无效");
+        }
+        Blog existing = getById(blogId);
+        if (existing == null) return Result.fail("博客不存在");
+        if (!user.getId().equals(existing.getUserId())) return Result.fail("无权操作该笔记");
+        boolean updated = update().set("visibility", visibility).setSql("update_time = NOW()")
+                .eq("id", blogId).eq("user_id", user.getId()).update();
+        return updated ? queryBlogByid(blogId) : Result.fail("可见性更新失败");
+    }
+
+    @Override
+    @Transactional
+    public Result deleteBlog(Long blogId) {
+        UserDTO user = UserHolder.getUser();
+        if (user == null) return Result.fail("请先登录");
+        Blog existing = getById(blogId);
+        if (existing == null) return Result.fail("博客不存在");
+        if (!user.getId().equals(existing.getUserId())) return Result.fail("无权操作该笔记");
+        blogCommentsMapper.deleteByBlogId(blogId);
+        blogCollectionMapper.deleteByBlogId(blogId);
+        blogLikeMapper.deleteByBlogId(blogId);
+        boolean removed = removeById(blogId);
+        if (!removed) throw new IllegalStateException("笔记删除失败");
+        stringRedisTemplate.delete(RedisConstants.BLOG_LIKED_KEY + blogId);
+        return Result.ok();
+    }
+
+    @Override
+    public boolean canCurrentUserView(Blog blog) {
+        if (blog == null || blog.getVisibility() == null || blog.getVisibility() == 0) return blog != null;
+        UserDTO user = UserHolder.getUser();
+        return user != null && user.getId().equals(blog.getUserId());
     }
   //点赞排行榜前五名
     @Override
     public Result queryBlogLikes(Long id) {
+        Blog target = getById(id);
+        if (target == null || !canCurrentUserView(target)) return Result.fail("笔记不存在或无权访问");
         String key= RedisConstants.BLOG_LIKED_KEY+id;
         //1.查询top5的点赞用户
         Set<String> userSet = stringRedisTemplate.opsForZSet().range(key, 0, 4);
@@ -142,6 +318,16 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     //保存blog到reids和数据库
     @Override
     public Result saveBlog(Blog blog) {
+        if (blog == null || StrUtil.isBlank(blog.getTitle()) || StrUtil.isBlank(blog.getContent())) return Result.fail("标题和正文不能为空");
+        String safeTitle = blog.getTitle().trim();
+        String safeContent = blog.getContent().trim();
+        if (safeTitle.length() > 255 || safeContent.length() > 2048) return Result.fail("标题或正文过长");
+        if (safeTitle.indexOf('<') >= 0 || safeTitle.indexOf('>') >= 0) return Result.fail("标题只能使用纯文本");
+        if (blog.getShopId() == null || shopService.getById(blog.getShopId()) == null) return Result.fail("关联商户不存在");
+        String safeImages = blog.getImages() == null ? "" : blog.getImages().trim();
+        if (safeImages.length() > 2048) return Result.fail("图片地址过长");
+        blog.setId(null); blog.setTitle(safeTitle); blog.setContent(safeContent); blog.setImages(safeImages);
+        blog.setLiked(0); blog.setComments(0); blog.setVisibility(0);
         //1.获取登录用户
         UserDTO user = UserHolder.getUser();
         blog.setUserId(user.getId());
@@ -197,7 +383,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         String idStr= StrUtil.join(",",ids);
         List<Blog> blogs = query()
                 //实现的就是WHERE id in (5,1) ORDER BY FIELD(id,5,1)
-                .in("id", ids).last("ORDER BY FIELD(id," + idStr + ")").list();
+                .in("id", ids).eq("visibility", 0).last("ORDER BY FIELD(id," + idStr + ")").list();
         for(Blog blog:blogs){
             //5.1 查询blog有关的用户
             queryBlogUser(blog);

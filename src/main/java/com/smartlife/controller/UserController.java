@@ -5,6 +5,12 @@ import cn.hutool.core.bean.BeanUtil;
 import com.smartlife.dto.LoginFormDTO;
 import com.smartlife.dto.Result;
 import com.smartlife.dto.UserDTO;
+import com.smartlife.dto.NicknameUpdateDTO;
+import com.smartlife.dto.IntroduceUpdateDTO;
+import com.smartlife.dto.GenderUpdateDTO;
+import com.smartlife.dto.CityUpdateDTO;
+import com.smartlife.dto.BirthdayUpdateDTO;
+import com.smartlife.dto.IconUpdateDTO;
 import com.smartlife.entity.User;
 import com.smartlife.entity.UserInfo;
 import com.smartlife.service.IUserInfoService;
@@ -56,9 +62,8 @@ public class UserController {
      * @return 无
      */
     @PostMapping("/logout")
-    public Result logout(){
-        // TODO 实现登出功能
-        return Result.fail("功能未完成");
+    public Result logout(@RequestHeader(value = "authorization", required = false) String token){
+        return userService.logout(token);
     }
 
     @GetMapping("/me")
@@ -67,6 +72,43 @@ public class UserController {
         //获取当前登录的用户并返回
         UserDTO user= UserHolder.getUser();
         return Result.ok(user);
+    }
+
+    @GetMapping("/me/profile")
+    public Result myProfile() {
+        return userService.queryMyProfile();
+    }
+
+    @PutMapping("/me/nickname")
+    public Result updateNickname(@RequestBody NicknameUpdateDTO request,
+                                 @RequestHeader(value = "authorization", required = false) String token) {
+        return userService.updateNickname(request == null ? null : request.getNickName(), token);
+    }
+
+    @PutMapping("/me/introduce")
+    public Result updateIntroduce(@RequestBody IntroduceUpdateDTO request) {
+        return userService.updateIntroduce(request == null ? null : request.getIntroduce());
+    }
+
+    @PutMapping("/me/gender")
+    public Result updateGender(@RequestBody GenderUpdateDTO request) {
+        return userService.updateGender(request == null ? null : request.getGender());
+    }
+
+    @PutMapping("/me/city")
+    public Result updateCity(@RequestBody CityUpdateDTO request) {
+        return userService.updateCity(request == null ? null : request.getCity());
+    }
+
+    @PutMapping("/me/birthday")
+    public Result updateBirthday(@RequestBody BirthdayUpdateDTO request) {
+        return userService.updateBirthday(request == null ? null : request.getBirthday());
+    }
+
+    @PutMapping("/me/icon")
+    public Result updateIcon(@RequestBody IconUpdateDTO request,
+                             @RequestHeader(value = "authorization", required = false) String token) {
+        return userService.updateIcon(request == null ? null : request.getIcon(), token);
     }
 
     @GetMapping("/info/{id}")

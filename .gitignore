@@ -1,39 +1,105 @@
-# Maven build output
+# -----------------------------------------------------------------------------
+# Java / Maven build products
+# -----------------------------------------------------------------------------
 target/
+out/
+build/
+bin/
 *.class
+*.jar
+*.war
+*.ear
+*.nar
+dependency-reduced-pom.xml
+.flattened-pom.xml
+pom.xml.releaseBackup
+release.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.properties.sha256
+!.mvn/wrapper/maven-wrapper.jar
 
-# IntelliJ IDEA
+# Test, coverage and static-analysis output
+coverage/
+.coverage
+.nyc_output/
+jacoco.exec
+*.exec
+.scannerwork/
+.sonar/
+.checkstyle/
+.pmd/
+
+# -----------------------------------------------------------------------------
+# IDEs and editors
+# -----------------------------------------------------------------------------
 .idea/
 *.iml
 *.iws
 *.ipr
-out/
+.vscode/
+*.code-workspace
+.classpath
+.project
+.settings/
+.factorypath
+.apt_generated/
+.apt_generated_tests/
+.sts4-cache/
+.springBeans
+.recommenders/
+nbproject/private/
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+.metadata/
 
-# Logs and JVM crash reports
+# Local AI coding-agent metadata
+.agents/
+.codex/
+.claude/
+.cursor/
+.windsurf/
+
+# -----------------------------------------------------------------------------
+# Logs, diagnostics and process state
+# -----------------------------------------------------------------------------
 *.log
+*.log.*
 logs/
 log/
 hs_err_pid*
 replay_pid*
+heapdump*
+*.hprof
+*.jfr
+*.pid
+*.pid.lock
 
-# Temporary and backup files
+# Temporary, cache and backup files
 tmp/
 temp/
+.tmp/
+.cache/
+work/
 *.tmp
 *.temp
 *.swp
 *.swo
 *~
 *.bak
+*.orig
+*.rej
 
-# Local application data and uploaded files
+# -----------------------------------------------------------------------------
+# Local application/runtime data
+# -----------------------------------------------------------------------------
 data/
 uploads/
 upload/
-work/
-*.pid
+storage/
 
-# Local Docker bind-mount / volume data
+# Local Docker bind mounts and volume data
 docker-data/
 volumes/
 mysql-data/
@@ -43,29 +109,58 @@ prometheus-data/
 alertmanager-data/
 dump.rdb
 appendonly.aof
+appendonlydir/
 
-# Local environment and sensitive configuration
+# Database exports/backups (project migration and seed *.sql files stay tracked)
+/aiops.sql
+*.dump
+*.dump.gz
+*.sql.gz
+*.sql.zip
+*.sqlite
+*.sqlite3
+*.db
+
+# -----------------------------------------------------------------------------
+# Local environment files and secrets
+# -----------------------------------------------------------------------------
 .env
 .env.*
 !.env.example
 !.env.template
+!.env.sample
+
 src/main/resources/application-local.yml
 src/main/resources/application-local.yaml
 src/main/resources/application-local.properties
 src/main/resources/application-secret.yml
 src/main/resources/application-secret.yaml
 src/main/resources/application-secret.properties
+src/main/resources/application-*.local.yml
+src/main/resources/application-*.local.yaml
+src/main/resources/application-*.local.properties
+
 *.jks
+*.keystore
+*.truststore
 *.p12
 *.pfx
 *.pem
 *.key
+*.crt
+*.cer
+credentials.json
+service-account*.json
 
+# -----------------------------------------------------------------------------
 # Operating-system metadata
+# -----------------------------------------------------------------------------
 .DS_Store
+.AppleDouble
+.LSOverride
+._*
 Thumbs.db
+ehthumbs.db
 Desktop.ini
-
-# Editor settings
-.vscode/
-*.code-workspace
+$RECYCLE.BIN/
+System Volume Information/

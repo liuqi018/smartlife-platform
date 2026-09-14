@@ -20,8 +20,17 @@ public interface IUserService extends IService<User> {
     Result sendCode(String phone, HttpSession session);
 
     Result login(LoginFormDTO loginForm, HttpSession session);
+    Result logout(String token);
 
     Result sign();
 
     Result signCount();
+
+    Result queryMyProfile();
+    Result updateNickname(String nickname, String token);
+    Result updateIntroduce(String introduce);
+    Result updateGender(Integer gender);
+    Result updateCity(String city);
+    Result updateBirthday(String birthday);
+    Result updateIcon(String icon, String token);
 }

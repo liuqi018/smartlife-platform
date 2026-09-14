@@ -8,8 +8,11 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.smartlife.dto.LoginFormDTO;
 import com.smartlife.dto.Result;
 import com.smartlife.dto.UserDTO;
+import com.smartlife.dto.UserProfileDTO;
 import com.smartlife.entity.User;
+import com.smartlife.entity.UserInfo;
 import com.smartlife.mapper.UserMapper;
+import com.smartlife.mapper.UserInfoMapper;
 import com.smartlife.service.IUserService;
 import com.smartlife.utils.RegexUtils;
 import com.smartlife.utils.UserHolder;
@@ -23,6 +26,8 @@ import javax.servlet.http.HttpSession;
 
 
 import java.time.LocalDateTime;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
@@ -46,6 +51,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
    //用 Redis+token 的搭配
     @Resource
     private StringRedisTemplate stringRedisTemplate;
+    @Resource
+    private UserInfoMapper userInfoMapper;
     //实现发短信验证码功能
     @Override
     public Result sendCode(String phone, HttpSession session) {
@@ -111,6 +118,12 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         save(user);
        return user;
     }
+    @Override
+    public Result logout(String token) {
+        if (token != null && !token.trim().isEmpty()) stringRedisTemplate.delete(LOGIN_USER_KEY + token.trim());
+        UserHolder.removeUser();
+        return Result.ok();
+    }
     //签到功能
     @Override
     public Result sign() {
@@ -167,6 +180,104 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             num>>>=1;//无符号右移一位
         }
         return Result.ok(count);
+    }
+
+    @Override
+    public Result queryMyProfile() {
+        UserDTO current = UserHolder.getUser();
+        if (current == null) return Result.fail("请先登录");
+        User user = getById(current.getId());
+        if (user == null) return Result.fail("用户不存在");
+        UserInfo info = userInfoMapper.selectById(current.getId());
+        UserProfileDTO profile = new UserProfileDTO();
+        profile.setId(String.valueOf(user.getId()));
+        profile.setNickName(user.getNickName());
+        profile.setIcon(user.getIcon());
+        profile.setIntroduce(info == null || info.getIntroduce() == null ? "" : info.getIntroduce());
+        profile.setGender(info == null || info.getGender() == null ? 0 : info.getGender());
+        profile.setCity(info == null || info.getCity() == null ? "" : info.getCity());
+        profile.setBirthday(info == null ? null : info.getBirthday());
+        profile.setPoints(info == null || info.getCredits() == null ? 0 : info.getCredits());
+        profile.setLevel(info == null || info.getLevel() == null ? 0 : info.getLevel());
+        return Result.ok(profile);
+    }
+
+    @Override
+    public Result updateNickname(String nickname, String token) {
+        UserDTO current = UserHolder.getUser();
+        if (current == null) return Result.fail("请先登录");
+        String value = nickname == null ? "" : nickname.trim();
+        if (value.length() < 2 || value.length() > 20) return Result.fail("昵称长度应为2到20个字符");
+        boolean updated = update().set("nick_name", value).setSql("update_time = NOW()")
+                .eq("id", current.getId()).update();
+        if (!updated) return Result.fail("昵称更新失败");
+        current.setNickName(value);
+        updateLoginCache(token, "nickName", value);
+        return queryMyProfile();
+    }
+
+    @Override
+    public Result updateIntroduce(String introduce) {
+        String value = introduce == null ? "" : introduce.trim();
+        if (value.length() > 128) return Result.fail("个人简介不能超过128个字符");
+        return updateInfoField("introduce", value);
+    }
+
+    @Override
+    public Result updateGender(Integer gender) {
+        if (gender == null || gender < 0 || gender > 2) return Result.fail("性别参数只能为0、1或2");
+        return updateInfoField("gender", gender);
+    }
+
+    @Override
+    public Result updateCity(String city) {
+        String value = city == null ? "" : city.trim();
+        if (value.length() > 64) return Result.fail("城市名称不能超过64个字符");
+        return updateInfoField("city", value);
+    }
+
+    @Override
+    public Result updateBirthday(String birthday) {
+        if (birthday == null || birthday.trim().isEmpty()) return Result.fail("生日不能为空");
+        final LocalDate value;
+        try {
+            value = LocalDate.parse(birthday.trim());
+        } catch (DateTimeParseException e) {
+            return Result.fail("生日格式应为yyyy-MM-dd");
+        }
+        if (value.isAfter(LocalDate.now())) return Result.fail("生日不能晚于当前日期");
+        return updateInfoField("birthday", value);
+    }
+
+    @Override
+    public Result updateIcon(String icon, String token) {
+        UserDTO current = UserHolder.getUser();
+        if (current == null) return Result.fail("请先登录");
+        String value = icon == null ? "" : icon.trim();
+        if (value.isEmpty() || value.length() > 255 || !value.startsWith("/imgs/")) {
+            return Result.fail("头像地址无效");
+        }
+        boolean updated = update().set("icon", value).setSql("update_time = NOW()")
+                .eq("id", current.getId()).update();
+        if (!updated) return Result.fail("头像更新失败");
+        current.setIcon(value);
+        updateLoginCache(token, "icon", value);
+        return queryMyProfile();
+    }
+
+    private Result updateInfoField(String column, Object value) {
+        UserDTO current = UserHolder.getUser();
+        if (current == null) return Result.fail("请先登录");
+        userInfoMapper.ensureExists(current.getId());
+        int updated = userInfoMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<UserInfo>()
+                .set(column, value).setSql("update_time = NOW()").eq("user_id", current.getId()));
+        return updated == 1 ? queryMyProfile() : Result.fail("个人资料更新失败");
+    }
+
+    private void updateLoginCache(String token, String field, String value) {
+        if (token != null && !token.trim().isEmpty()) {
+            stringRedisTemplate.opsForHash().put(LOGIN_USER_KEY + token.trim(), field, value);
+        }
     }
 
 }

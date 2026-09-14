@@ -1,9 +1,10 @@
 package com.smartlife.utils;
 
-import cn.hutool.core.util.BooleanUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -11,6 +12,7 @@ import javax.annotation.Resource;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 @Slf4j
@@ -19,8 +21,14 @@ public class CacheClient {
 
     private static final ExecutorService CACHE_REBUILD_EXECUTOR = Executors.newFixedThreadPool(10);
 
+    /** Temporary local-test counter for actual hot-cache database rebuild queries. */
+    private final AtomicInteger hotShopRebuildCount = new AtomicInteger();
+
     @Resource
     private StringRedisTemplate stringRedisTemplate;
+
+    @Resource
+    private RedissonClient redissonClient;
 
     public void set(String key, Object value, Long time, TimeUnit unit) {
         try {
@@ -33,6 +41,11 @@ public class CacheClient {
     }
 
     public void setWithLogicalTime(String key, Object value, Long time, TimeUnit unit) {
+        if (value == null) {
+            stringRedisTemplate.opsForValue().set(
+                    key, "", RedisConstants.CACHE_SHOP_NULL_TTL, TimeUnit.MINUTES);
+            return;
+        }
         RedisData redisData = new RedisData();
         redisData.setData(value);
         redisData.setExpireTime(System.currentTimeMillis() + unit.toMillis(time));
@@ -75,7 +88,7 @@ public class CacheClient {
 
         try {
             if (result == null) {
-                stringRedisTemplate.opsForValue().set(key, "", RedisConstants.CACHE_NULL_TTL, TimeUnit.MINUTES);
+                stringRedisTemplate.opsForValue().set(key, "", RedisConstants.CACHE_SHOP_NULL_TTL, TimeUnit.MINUTES);
                 return null;
             }
             this.set(key, result, time, unit);
@@ -99,55 +112,127 @@ public class CacheClient {
             throw e;
         }
 
-        if (StrUtil.isBlank(json)) {
+        // An empty string is a cached null value; do not penetrate to MySQL again.
+        if (json != null && StrUtil.isBlank(json)) {
             return null;
         }
 
+        // Logical-expire caches normally have no physical TTL. If a hot key is
+        // unexpectedly absent, rebuild it synchronously under the same mutex so
+        // concurrent requests cannot all fall back to MySQL.
+        if (json == null) {
+            return loadLogicalCacheOnMiss(key, id, type, dbFallback, time, unit);
+        }
+
         RedisData redisData = JSONUtil.toBean(json, RedisData.class);
-        R result = JSONUtil.toBean(JSONUtil.parseObj(redisData.getData()), type);
+        Object cachedData = redisData.getData();
+        if (cachedData == null) {
+            stringRedisTemplate.opsForValue().set(
+                    key, "", RedisConstants.CACHE_SHOP_NULL_TTL, TimeUnit.MINUTES);
+            return null;
+        }
+        R result = JSONUtil.toBean(JSONUtil.parseObj(cachedData), type);
         Long expireTime = redisData.getExpireTime();
-        if (expireTime > System.currentTimeMillis()) {
+        if (expireTime != null && expireTime > System.currentTimeMillis()) {
             return result;
         }
 
-        String lockKey = RedisConstants.LOCK_SHOP_KEY + id;
-        boolean lock = tryLock(lockKey);
-        if (lock) {
-            CACHE_REBUILD_EXECUTOR.submit(() -> {
+        CACHE_REBUILD_EXECUTOR.submit(() -> {
+            RLock lock = redissonClient.getLock(RedisConstants.LOCK_SHOP_KEY + id);
+            if (!lock.tryLock()) {
+                return;
+            }
+            try {
+                // A queued task may run after another thread has already rebuilt
+                // the value. Recheck under the lock before querying MySQL.
+                String latest = stringRedisTemplate.opsForValue().get(key);
+                if (isLogicalCacheFresh(latest)) {
+                    return;
+                }
                 try {
+                    int rebuildCount = hotShopRebuildCount.incrementAndGet();
+                    log.info("hot shop cache database fallback executing,key={},businessId={},rebuildCount={}",
+                            key, id, rebuildCount);
                     R refreshed = dbFallback.apply(id);
-                    this.setWithLogicalTime(key, refreshed, time, unit);
+                    if (refreshed == null) {
+                        stringRedisTemplate.opsForValue().set(
+                                key, "", RedisConstants.CACHE_SHOP_NULL_TTL, TimeUnit.MINUTES);
+                    } else {
+                        this.setWithLogicalTime(key, refreshed, time, unit);
+                    }
                     log.info("cache rebuild success,key={},businessId={}", key, id);
                 } catch (Exception e) {
                     log.error("cache rebuild failed,key={},businessId={},errorType={},error={}",
                             key, id, e.getClass().getSimpleName(), e.getMessage(), e);
-                    throw new RuntimeException(e);
-                } finally {
-                    unlock(lockKey);
                 }
-            });
-        }
+            } finally {
+                if (lock.isHeldByCurrentThread()) {
+                    lock.unlock();
+                }
+            }
+        });
         return result;
     }
 
-    private boolean tryLock(String key) {
-        try {
-            Boolean flag = stringRedisTemplate.opsForValue().setIfAbsent(key, "1", 10, TimeUnit.SECONDS);
-            return BooleanUtil.isTrue(flag);
-        } catch (Exception e) {
-            log.error("redis lock acquire failed,key={},errorType={},error={}",
-                    key, e.getClass().getSimpleName(), e.getMessage(), e);
-            throw e;
+    public int getHotShopRebuildCount() {
+        return hotShopRebuildCount.get();
+    }
+
+    public int resetHotShopRebuildCount() {
+        return hotShopRebuildCount.getAndSet(0);
+    }
+
+    private boolean isLogicalCacheFresh(String json) {
+        if (StrUtil.isBlank(json)) {
+            return json != null;
+        }
+        RedisData redisData = JSONUtil.toBean(json, RedisData.class);
+        Long expireTime = redisData.getExpireTime();
+        return expireTime != null && expireTime > System.currentTimeMillis();
+    }
+
+    private <R, ID> R loadLogicalCacheOnMiss(String key, ID id, Class<R> type,
+                                              Function<ID, R> dbFallback, Long time, TimeUnit unit) {
+        RLock lock = redissonClient.getLock(RedisConstants.LOCK_SHOP_KEY + id);
+        while (true) {
+            if (lock.tryLock()) {
+                try {
+                    // Double-check after acquiring the lock: another request may
+                    // already have rebuilt the cache while this request waited.
+                    String latest = stringRedisTemplate.opsForValue().get(key);
+                    if (latest != null) {
+                        if (StrUtil.isBlank(latest)) {
+                            return null;
+                        }
+                        RedisData redisData = JSONUtil.toBean(latest, RedisData.class);
+                        if (redisData.getData() == null) {
+                            return null;
+                        }
+                        return JSONUtil.toBean(JSONUtil.parseObj(redisData.getData()), type);
+                    }
+
+                    R loaded = dbFallback.apply(id);
+                    if (loaded == null) {
+                        stringRedisTemplate.opsForValue().set(
+                                key, "", RedisConstants.CACHE_SHOP_NULL_TTL, TimeUnit.MINUTES);
+                        return null;
+                    }
+                    this.setWithLogicalTime(key, loaded, time, unit);
+                    return loaded;
+                } finally {
+                    if (lock.isHeldByCurrentThread()) {
+                        lock.unlock();
+                    }
+                }
+            }
+
+            try {
+                TimeUnit.MILLISECONDS.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted while waiting for cache rebuild", e);
+            }
         }
     }
 
-    private void unlock(String key) {
-        try {
-            stringRedisTemplate.delete(key);
-        } catch (Exception e) {
-            log.error("redis lock release failed,key={},errorType={},error={}",
-                    key, e.getClass().getSimpleName(), e.getMessage(), e);
-            throw e;
-        }
-    }
 }

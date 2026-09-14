@@ -43,6 +43,9 @@ INSERT INTO `tb_blog` VALUES (5, 1, 2, '人均30💰杭州这家港式茶餐厅�
 INSERT INTO `tb_blog` VALUES (6, 10, 1, '杭州周末好去处｜💰50就可以骑马啦🐎', '/imgs/blogs/blog1.jpg', '杭州周末好去处｜💰50就可以骑马啦🐎', 1, 0, '2022-01-11 16:05:47', '2022-03-10 09:21:41');
 INSERT INTO `tb_blog` VALUES (7, 10, 1, '杭州周末好去处｜💰50就可以骑马啦🐎', '/imgs/blogs/blog1.jpg', '杭州周末好去处｜💰50就可以骑马啦🐎', 1, 0, '2022-01-11 16:05:47', '2022-03-10 09:21:42');
 
+ALTER TABLE `tb_blog`
+  ADD COLUMN `visibility` tinyint(1) UNSIGNED NOT NULL DEFAULT 0 COMMENT '可见性，0：公开，1：仅自己可见' AFTER `comments`;
+
 -- ----------------------------
 -- Table structure for tb_blog_comments
 -- ----------------------------
@@ -66,6 +69,34 @@ CREATE TABLE `tb_blog_comments`  (
 -- ----------------------------
 
 -- ----------------------------
+-- Table structure for tb_blog_collection
+-- ----------------------------
+DROP TABLE IF EXISTS `tb_blog_collection`;
+CREATE TABLE `tb_blog_collection` (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id` bigint(20) UNSIGNED NOT NULL COMMENT '用户id',
+  `blog_id` bigint(20) UNSIGNED NOT NULL COMMENT '笔记id',
+  `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE KEY `uk_blog_collection_user_blog` (`user_id`, `blog_id`) USING BTREE,
+  KEY `idx_blog_collection_blog` (`blog_id`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='笔记收藏';
+
+-- ----------------------------
+-- Table structure for tb_blog_like
+-- ----------------------------
+DROP TABLE IF EXISTS `tb_blog_like`;
+CREATE TABLE `tb_blog_like` (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id` bigint(20) UNSIGNED NOT NULL COMMENT '用户id',
+  `blog_id` bigint(20) UNSIGNED NOT NULL COMMENT '笔记id',
+  `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE KEY `uk_blog_like_user_blog` (`user_id`, `blog_id`) USING BTREE,
+  KEY `idx_blog_like_blog` (`blog_id`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='笔记点赞明细';
+
+-- ----------------------------
 -- Table structure for tb_follow
 -- ----------------------------
 DROP TABLE IF EXISTS `tb_follow`;
@@ -74,7 +105,8 @@ CREATE TABLE `tb_follow`  (
   `user_id` bigint(20) UNSIGNED NOT NULL COMMENT '用户id',
   `follow_user_id` bigint(20) UNSIGNED NOT NULL COMMENT '关联的用户id',
   `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  PRIMARY KEY (`id`) USING BTREE
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE KEY `uk_follow_user_target` (`user_id`, `follow_user_id`) USING BTREE
 ) ENGINE = InnoDB AUTO_INCREMENT = 1 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Compact;
 
 -- ----------------------------
@@ -121,7 +153,7 @@ CREATE TABLE `tb_shop`  (
   `update_time` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`) USING BTREE,
   INDEX `foreign_key_type`(`type_id`) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 15 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Compact;
+) ENGINE = InnoDB AUTO_INCREMENT = 39 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Compact;
 
 -- ----------------------------
 -- Records of tb_shop
@@ -140,6 +172,30 @@ INSERT INTO `tb_shop` VALUES (11, 'INLOVE KTV(水晶城店)', 2, 'https://p0.mei
 INSERT INTO `tb_shop` VALUES (12, '魅(杭州远洋乐堤港店)', 2, 'https://p0.meituan.net/dpmerchantpic/63833f6ba0393e2e8722420ef33f3d40466664.jpg,https://p0.meituan.net/dpmerchantpic/ae3c94cc92c529c4b1d7f68cebed33fa105810.png,', '远洋乐堤港', '丽水路58号远洋乐堤港F4', 120.14983, 30.31211, 88, 0000006444, 0000000235, 46, '10:00-02:00', '2021-12-22 20:34:34', '2021-12-22 20:34:34');
 INSERT INTO `tb_shop` VALUES (13, '讴K拉量贩KTV(北城天地店)', 2, 'https://p1.meituan.net/merchantpic/598c83a8c0d06fe79ca01056e214d345875600.jpg,https://qcloud.dpfile.com/pc/HhvI0YyocYHRfGwJWqPQr34hRGRl4cWdvlNwn3dqghvi4WXlM2FY1te0-7pE3Wb9_Gd2X_f-v9T8Yj4uLt25Gg.jpg,https://qcloud.dpfile.com/pc/F5ZVzZaXFE27kvQzPnaL4V8O9QCpVw2nkzGrxZE8BqXgkfyTpNExfNG5CEPQX4pjGybIjx5eX6WNgCPvcASYAw.jpg', 'D32天阳购物中心', '湖州街567号北城天地5层', 120.130453, 30.327655, 58, 0000018997, 0000001857, 41, '12:00-02:00', '2021-12-22 20:38:54', '2021-12-22 20:40:04');
 INSERT INTO `tb_shop` VALUES (14, '星聚会KTV(拱墅区万达店)', 2, 'https://p0.meituan.net/dpmerchantpic/f4cd6d8d4eb1959c3ea826aa05a552c01840451.jpg,https://p0.meituan.net/dpmerchantpic/2efc07aed856a8ab0fc75c86f4b9b0061655777.jpg,https://qcloud.dpfile.com/pc/zWfzzIorCohKT0bFwsfAlHuayWjI6DBEMPHHncmz36EEMU9f48PuD9VxLLDAjdoU_Gd2X_f-v9T8Yj4uLt25Gg.jpg', '北部新城', '杭行路666号万达广场C座1-2F', 120.128958, 30.337252, 60, 0000017771, 0000000685, 47, '10:00-22:00', '2021-12-22 20:48:54', '2021-12-22 20:48:54');
+INSERT INTO `tb_shop` VALUES (15, '云气炭火烧烤·南京演示店', 1, '/imgs/types/ms.png', '南信大', '南京市江北新区宁六路219号南信大东苑生活区（演示商户）', 118.709800, 32.207000, 68, 1280, 326, 47, '16:30-01:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (16, '盘城小院烧烤·南京演示店', 1, '/imgs/types/ms.png', '盘城', '南京市江北新区盘城新街烧烤主题街区18号（演示商户）', 118.704800, 32.211200, 76, 930, 218, 45, '17:00-24:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (17, '龙王山鲜切牛肉火锅·南京演示店', 1, '/imgs/types/ms.png', '南信大', '南京市江北新区宁六路龙王山生活广场2层（演示商户）', 118.716200, 32.207800, 108, 1680, 405, 48, '11:00-23:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (18, '北辰巷重庆火锅·南京演示店', 1, '/imgs/types/ms.png', '高新开发区', '南京市江北新区高新路北辰里商业街6号（演示商户）', 118.721000, 32.201500, 92, 1410, 337, 46, '10:30-24:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (19, '气象书咖·南京演示店', 1, '/imgs/types/ms.png', '南信大', '南京市江北新区宁六路219号南信大创业园咖啡区（演示商户）', 118.712500, 32.203000, 36, 860, 194, 48, '08:00-22:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (20, '青柠云饮品铺·南京演示店', 1, '/imgs/types/ms.png', '盘城', '南京市江北新区盘城新街大学城商业坊12号（演示商户）', 118.706000, 32.202000, 18, 2150, 512, 46, '09:30-23:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (21, '金陵梅花糕小吃铺·南京演示店', 1, '/imgs/types/ms.png', '南信大', '南京市江北新区盘城新街114号西苑生活区（演示商户）', 118.708000, 32.209500, 16, 2480, 601, 47, '07:30-21:30', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (22, '鸭香记鸭血粉丝汤·南京演示店', 1, '/imgs/types/ms.png', '南信大', '南京市江北新区宁六路信息工程大学地铁站旁（演示商户）', 118.718500, 32.210000, 24, 3260, 788, 48, '06:30-22:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (23, '星云芋圆甜品·南京演示店', 1, '/imgs/types/ms.png', '高新开发区', '南京市江北新区高新路星火街区A座1层（演示商户）', 118.713800, 32.199500, 28, 1170, 279, 45, '10:00-22:30', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (24, '桂雨烘焙甜品屋·南京演示店', 1, '/imgs/types/ms.png', '盘城', '南京市江北新区盘城新街社区邻里中心3号（演示商户）', 118.700500, 32.205000, 42, 790, 165, 46, '08:30-21:30', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (25, '金陵家常菜馆·南京演示店', 1, '/imgs/types/ms.png', '龙王山', '南京市江北新区龙山南路邻里商业中心2层（演示商户）', 118.726000, 32.213000, 65, 1820, 443, 47, '10:30-21:30', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (26, '校园巷手工面馆·南京演示店', 1, '/imgs/types/ms.png', '盘城', '南京市江北新区盘城街道永丰路大学生公寓旁（演示商户）', 118.695000, 32.217000, 22, 2740, 632, 45, '06:30-21:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (27, '青春麦克风KTV·南京演示店', 2, '/imgs/types/KTV.png', '南信大', '南京市江北新区宁六路大学城商业广场4层（演示商户）', 118.719000, 32.204000, 88, 760, 184, 46, '12:00-02:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (28, '星河量贩KTV·南京演示店', 2, '/imgs/types/KTV.png', '高新开发区', '南京市江北新区永新路星河商业中心3层（演示商户）', 118.692000, 32.201000, 72, 640, 151, 44, '13:00-01:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (29, '云朵造型美发·南京演示店', 3, '/imgs/types/lrmf.png', '南信大', '南京市江北新区盘城新街校园生活广场1层（演示商户）', 118.714000, 32.212000, 75, 520, 136, 47, '09:30-21:30', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (30, '简悦理发工作室·南京演示店', 3, '/imgs/types/lrmf.png', '盘城', '南京市江北新区盘城街道盘城新居商业街8号（演示商户）', 118.699000, 32.209000, 48, 410, 103, 45, '10:00-21:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (31, '风云健身房·南京演示店', 4, '/imgs/types/jsyd.png', '高新开发区', '南京市江北新区高新路创新体育中心2层（演示商户）', 118.723000, 32.206000, 128, 690, 172, 48, '06:30-23:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (32, '青岚瑜伽运动馆·南京演示店', 4, '/imgs/types/jsyd.png', '高新开发区', '南京市江北新区星火路青年公寓商业区（演示商户）', 118.705000, 32.196000, 96, 380, 94, 46, '08:00-22:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (33, '微风美容SPA·南京演示店', 6, '/imgs/types/spa.png', '南信大', '南京市江北新区宁六路龙王山生活广场3层（演示商户）', 118.716000, 32.197000, 138, 350, 88, 47, '10:00-22:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (34, '小气象家亲子乐园·南京演示店', 7, '/imgs/types/qzyl.png', '龙王山', '南京市江北新区龙山北路亲子成长中心1层（演示商户）', 118.728000, 32.216000, 78, 460, 119, 46, '09:00-20:30', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (35, '北纬32度音乐酒馆·南京演示店', 8, '/imgs/types/jiuba.png', '盘城', '南京市江北新区永丰路青年夜生活街区5号（演示商户）', 118.694000, 32.214000, 118, 570, 141, 45, '18:00-02:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (36, '龙王山派对轰趴馆·南京演示店', 9, '/imgs/types/hpg.png', '龙王山', '南京市江北新区龙山南路青年创业街区9号（演示商户）', 118.721000, 32.219000, 168, 320, 82, 47, '10:00-24:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (37, '桌游研究所轰趴馆·南京演示店', 9, '/imgs/types/hpg.png', '高新开发区', '南京市江北新区星火路大学生创业街B座（演示商户）', 118.702000, 32.193000, 58, 610, 153, 48, '12:00-01:00', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_shop` VALUES (38, '晴空美甲美睫·南京演示店', 10, '/imgs/types/mjmj.png', '南信大', '南京市江北新区盘城新街南信大西苑生活区（演示商户）', 118.710000, 32.215000, 66, 430, 108, 46, '10:00-21:30', '2026-08-24 10:00:00', '2026-08-24 10:00:00');
 
 -- ----------------------------
 -- Table structure for tb_shop_type
@@ -1222,7 +1278,7 @@ CREATE TABLE `tb_user_info`  (
   `introduce` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '个人介绍，不要超过128个字符',
   `fans` int(8) UNSIGNED NULL DEFAULT 0 COMMENT '粉丝数量',
   `followee` int(8) UNSIGNED NULL DEFAULT 0 COMMENT '关注的人的数量',
-  `gender` tinyint(1) UNSIGNED NULL DEFAULT 0 COMMENT '性别，0：男，1：女',
+  `gender` tinyint(1) UNSIGNED NULL DEFAULT 0 COMMENT '性别，0：未设置，1：男，2：女',
   `birthday` date NULL DEFAULT NULL COMMENT '生日',
   `credits` int(8) UNSIGNED NULL DEFAULT 0 COMMENT '积分',
   `level` tinyint(1) UNSIGNED NULL DEFAULT 0 COMMENT '会员级别，0~9级,0代表未开通会员',
@@ -1258,6 +1314,14 @@ CREATE TABLE `tb_voucher`  (
 -- Records of tb_voucher
 -- ----------------------------
 INSERT INTO `tb_voucher` VALUES (1, 1, '50元代金券', '周一至周日均可使用', '全场通用\\n无需预约\\n可无限叠加\\不兑现、不找零\\n仅限堂食', 4750, 5000, 0, 1, '2022-01-04 09:42:39', '2022-01-04 09:43:31');
+INSERT INTO `tb_voucher` VALUES (2, 15, '烧烤双人餐10元优惠券', '南京演示优惠券', '仅限堂食，每桌限用一张，不兑现、不找零', 9000, 10000, 0, 1, '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_voucher` VALUES (3, 17, '火锅100元代金券', '满两人可用', '仅限堂食，每桌限用一张，不与其他优惠同享', 8800, 10000, 0, 1, '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_voucher` VALUES (4, 19, '咖啡饮品5元优惠券', '南京演示优惠券', '单杯满20元可用，不兑现、不找零', 1500, 2000, 0, 1, '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_voucher` VALUES (5, 21, '小吃套餐3元优惠券', '南京演示优惠券', '满15元可用，每单限用一张', 1200, 1500, 0, 1, '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_voucher` VALUES (6, 24, '甜品双人套餐8元优惠券', '南京演示优惠券', '指定双人套餐可用，不兑现、不找零', 4200, 5000, 0, 1, '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_voucher` VALUES (7, 27, 'KTV欢唱20元优惠券', '南京演示优惠券', '包厢消费满100元可用，每次限用一张', 8000, 10000, 0, 1, '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_voucher` VALUES (8, 32, '瑜伽体验课10元优惠券', '南京演示优惠券', '首次体验可用，需提前预约', 2900, 3900, 0, 1, '2026-08-24 10:00:00', '2026-08-24 10:00:00');
+INSERT INTO `tb_voucher` VALUES (9, 36, '轰趴套餐30元优惠券', '南京演示优惠券', '套餐满200元可用，节假日除外', 17000, 20000, 0, 1, '2026-08-24 10:00:00', '2026-08-24 10:00:00');
 
 -- ----------------------------
 -- Table structure for tb_voucher_order

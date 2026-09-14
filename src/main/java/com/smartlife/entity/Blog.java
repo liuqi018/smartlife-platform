@@ -55,6 +55,12 @@ public class Blog implements Serializable {
      */
     @TableField(exist = false)
     private Boolean isLike;
+    @TableField(exist = false)
+    private Boolean likedByCurrentUser;
+    @TableField(exist = false)
+    private Boolean collectedByCurrentUser;
+    @TableField(exist = false)
+    private Boolean isOwner;
     /*
     * 添加isLike字段
     * */
@@ -85,6 +91,9 @@ public class Blog implements Serializable {
      * 评论数量
      */
     private Integer comments;
+
+    /** 0: public, 1: owner only. */
+    private Integer visibility;
 
     /**
      * 创建时间

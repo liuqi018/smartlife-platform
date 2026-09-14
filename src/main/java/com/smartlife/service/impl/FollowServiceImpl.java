@@ -12,6 +12,7 @@ import com.smartlife.service.IUserService;
 import com.smartlife.utils.UserHolder;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.dao.DuplicateKeyException;
 
 import javax.annotation.Resource;
 import java.util.List;
@@ -37,14 +38,21 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
     public Result follow(Long followUserId, Boolean isFollow) {
         //1.获取登录用户
         Long userId = UserHolder.getUser().getId();
+        if (followUserId == null || userService.getById(followUserId) == null) return Result.fail("目标用户不存在");
+        if (userId.equals(followUserId)) return Result.fail("不能关注自己");
         String key= "follows:"+userId;
         //1.判断到底是关注还是取关
         if(isFollow){
+            if (query().eq("user_id", userId).eq("follow_user_id", followUserId).count() > 0) {
+                stringRedisTemplate.opsForSet().add(key, followUserId.toString());
+                return Result.ok();
+            }
             //2.关注，新增数据
             Follow follow = new Follow();
             follow.setUserId(userId);
             follow.setFollowUserId(followUserId);
-            boolean isSuccess = save(follow);
+            boolean isSuccess;
+            try { isSuccess = save(follow); } catch (DuplicateKeyException e) { isSuccess = true; }
             if(isSuccess){
                 //把关注用户的id,放入redis中的set集合 sadd  userId followerUserId
                 stringRedisTemplate.opsForSet().add(key,followUserId.toString());
@@ -95,5 +103,14 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
                 .map(user -> BeanUtil.copyProperties(user, UserDTO.class))
                 .collect(Collectors.toList());
         return Result.ok(users);
+    }
+
+    @Override
+    public Result listMyFollows() {
+        UserDTO current = UserHolder.getUser();
+        if (current == null) {
+            return Result.fail("请先登录");
+        }
+        return Result.ok(baseMapper.selectFollowUsers(current.getId()));
     }
 }

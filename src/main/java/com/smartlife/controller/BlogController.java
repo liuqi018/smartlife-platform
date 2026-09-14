@@ -3,9 +3,13 @@ package com.smartlife.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.smartlife.dto.Result;
+import com.smartlife.dto.BlogCommentCreateDTO;
+import com.smartlife.dto.BlogUpdateDTO;
+import com.smartlife.dto.BlogVisibilityDTO;
 import com.smartlife.dto.UserDTO;
 import com.smartlife.entity.Blog;
 import com.smartlife.service.IBlogService;
+import com.smartlife.service.IBlogCommentsService;
 import com.smartlife.service.IUserService;
 import com.smartlife.utils.SystemConstants;
 import com.smartlife.utils.UserHolder;
@@ -29,6 +33,8 @@ public class BlogController {
     private IBlogService blogService;
     @Resource
     private IUserService userService;
+    @Resource
+    private IBlogCommentsService blogCommentsService;
     @PostMapping
     //保存发布的blog
     public Result saveBlog(@RequestBody Blog blog) {
@@ -41,14 +47,7 @@ public class BlogController {
     }
     @GetMapping("/of/me")
     public Result queryMyBlog(@RequestParam(value = "current", defaultValue = "1") Integer current) {
-        // 获取登录用户
-        UserDTO user = UserHolder.getUser();
-        // 根据用户查询
-        Page<Blog> page = blogService.query()
-                .eq("user_id", user.getId()).page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
-        // 获取当前页数据
-        List<Blog> records = page.getRecords();
-        return Result.ok(records);
+        return blogService.queryMyBlogs(current);
     }
     //分页查询
     @GetMapping("/hot")
@@ -59,6 +58,27 @@ public class BlogController {
     @GetMapping("/{id}")
     public Result queryBlogById(@PathVariable("id")Long id){
         return blogService.queryBlogByid(id);
+    }
+    @PutMapping("/{blogId}/collect")
+    public Result collectBlog(@PathVariable Long blogId) {
+        return blogService.collectBlog(blogId);
+    }
+    @PutMapping("/{blogId}")
+    public Result updateBlog(@PathVariable Long blogId, @RequestBody BlogUpdateDTO request) {
+        return blogService.updateBlog(blogId, request);
+    }
+    @PutMapping("/{blogId}/visibility")
+    public Result updateVisibility(@PathVariable Long blogId, @RequestBody BlogVisibilityDTO request) {
+        return blogService.updateVisibility(blogId, request == null ? null : request.getVisibility());
+    }
+    @DeleteMapping("/{blogId}")
+    public Result deleteBlog(@PathVariable Long blogId) {
+        return blogService.deleteBlog(blogId);
+    }
+    @PostMapping("/{blogId}/comments")
+    public Result createComment(@PathVariable Long blogId,
+                                @RequestBody BlogCommentCreateDTO request) {
+        return blogCommentsService.createComment(blogId, request);
     }
     //点赞排行榜
     @GetMapping("/likes/{id}")
@@ -73,7 +93,11 @@ public class BlogController {
             @RequestParam("id") Long id) {
         // 根据用户查询
         Page<Blog> page = blogService.query()
-                .eq("user_id", id).page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
+                .eq("user_id", id)
+                .eq("visibility", 0)
+                .orderByDesc("create_time")
+                .orderByDesc("id")
+                .page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
         // 获取当前页数据
         List<Blog> records = page.getRecords();
         return Result.ok(records);

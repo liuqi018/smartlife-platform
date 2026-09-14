@@ -1,66 +1,86 @@
 package com.smartlife.controller;
 
-import cn.hutool.core.io.FileUtil;
-import cn.hutool.core.util.StrUtil;
 import com.smartlife.dto.Result;
+import com.smartlife.dto.UserDTO;
+import com.smartlife.service.IBlogService;
 import com.smartlife.utils.SystemConstants;
-import lombok.extern.slf4j.Slf4j;
+import com.smartlife.utils.UserHolder;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import javax.annotation.Resource;
+import java.io.*;
+import java.nio.file.*;
+import java.util.*;
+import java.util.concurrent.TimeUnit;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.UUID;
-
-@Slf4j
 @RestController
 @RequestMapping("upload")
 public class UploadController {
+    private static final long MAX_BYTES = 5L * 1024 * 1024;
+    private static final Set<String> EXTENSIONS = new HashSet<>(Arrays.asList("jpg", "jpeg", "png", "webp"));
+    private static final String OWNER_KEY = "upload:owner:";
+    @Resource private StringRedisTemplate stringRedisTemplate;
+    @Resource private IBlogService blogService;
 
     @PostMapping("blog")
     public Result uploadImage(@RequestParam("file") MultipartFile image) {
+        UserDTO user = UserHolder.getUser();
+        if (user == null) return Result.fail("请先登录");
+        String error = validate(image);
+        if (error != null) return Result.fail(error);
+        String relative = createName(extension(image.getOriginalFilename()));
         try {
-            // 获取原始文件名称
-            String originalFilename = image.getOriginalFilename();
-            // 生成新文件名
-            String fileName = createNewFileName(originalFilename);
-            // 保存文件
-            image.transferTo(new File(SystemConstants.IMAGE_UPLOAD_DIR, fileName));
-            // 返回结果
-            log.debug("文件上传成功，{}", fileName);
-            return Result.ok(fileName);
-        } catch (IOException e) {
-            throw new RuntimeException("文件上传失败", e);
-        }
+            Path base = Paths.get(SystemConstants.IMAGE_UPLOAD_DIR).toAbsolutePath().normalize();
+            Path target = base.resolve(relative.substring(1)).normalize();
+            if (!target.startsWith(base)) return Result.fail("非法文件路径");
+            Files.createDirectories(target.getParent());
+            image.transferTo(target);
+            stringRedisTemplate.opsForValue().set(OWNER_KEY + relative, user.getId().toString(), 24, TimeUnit.HOURS);
+            return Result.ok(relative);
+        } catch (IOException e) { throw new IllegalStateException("文件上传失败", e); }
     }
 
-    @GetMapping("/blog/delete")
-    public Result deleteBlogImg(@RequestParam("name") String filename) {
-        File file = new File(SystemConstants.IMAGE_UPLOAD_DIR, filename);
-        if (!file.exists()) {
-            file = new File(SystemConstants.LEGACY_IMAGE_UPLOAD_DIR, filename);
-        }
-        if (file.isDirectory()) {
-            return Result.fail("错误的文件名称");
-        }
-        FileUtil.del(file);
-        return Result.ok();
+    @DeleteMapping("/blog")
+    public Result deleteBlogImg(@RequestParam("name") String name) {
+        UserDTO user = UserHolder.getUser();
+        if (user == null) return Result.fail("请先登录");
+        String relative = normalizeName(name);
+        if (relative == null) return Result.fail("非法文件路径");
+        String owner = stringRedisTemplate.opsForValue().get(OWNER_KEY + relative);
+        boolean ownBlog = blogService.query().eq("user_id", user.getId()).like("images", relative).count() > 0;
+        if (!user.getId().toString().equals(owner) && !ownBlog) return Result.fail("无权删除该图片");
+        Path base = Paths.get(SystemConstants.IMAGE_UPLOAD_DIR).toAbsolutePath().normalize();
+        Path target = base.resolve(relative.substring(1)).normalize();
+        if (!target.startsWith(base)) return Result.fail("非法文件路径");
+        try {
+            Files.deleteIfExists(target);
+            stringRedisTemplate.delete(OWNER_KEY + relative);
+            return Result.ok();
+        } catch (IOException e) { throw new IllegalStateException("文件删除失败", e); }
     }
 
-    private String createNewFileName(String originalFilename) {
-        // 获取后缀
-        String suffix = StrUtil.subAfter(originalFilename, ".", true);
-        // 生成目录
-        String name = UUID.randomUUID().toString();
-        int hash = name.hashCode();
-        int d1 = hash & 0xF;
-        int d2 = (hash >> 4) & 0xF;
-        // 判断目录是否存在
-        File dir = new File(SystemConstants.IMAGE_UPLOAD_DIR, StrUtil.format("/blogs/{}/{}", d1, d2));
-        if (!dir.exists()) {
-            dir.mkdirs();
-        }
-        // 生成文件名
-        return StrUtil.format("/blogs/{}/{}/{}.{}", d1, d2, name, suffix);
+    private String validate(MultipartFile file) {
+        if (file == null || file.isEmpty()) return "文件不能为空";
+        if (file.getSize() > MAX_BYTES) return "图片不能超过5MB";
+        String ext = extension(file.getOriginalFilename());
+        if (!EXTENSIONS.contains(ext)) return "只允许jpg/jpeg/png/webp图片";
+        String mime = Optional.ofNullable(file.getContentType()).orElse("").toLowerCase(Locale.ROOT);
+        if (!(ext.equals("jpg") || ext.equals("jpeg") ? mime.equals("image/jpeg") : mime.equals("image/" + ext))) return "图片类型与扩展名不匹配";
+        try (InputStream in = file.getInputStream()) {
+            byte[] h = new byte[12]; int n = in.read(h);
+            boolean magic = ((ext.equals("jpg") || ext.equals("jpeg")) && n >= 3 && (h[0]&255)==255 && (h[1]&255)==216 && (h[2]&255)==255)
+                    || (ext.equals("png") && n >= 8 && (h[0]&255)==137 && h[1]==80 && h[2]==78 && h[3]==71)
+                    || (ext.equals("webp") && n >= 12 && h[0]=='R' && h[1]=='I' && h[2]=='F' && h[3]=='F' && h[8]=='W' && h[9]=='E' && h[10]=='B' && h[11]=='P');
+            return magic ? null : "图片内容格式无效";
+        } catch (IOException e) { return "无法读取图片"; }
+    }
+    private String extension(String name) { int dot = name == null ? -1 : name.lastIndexOf('.'); return dot < 0 ? "" : name.substring(dot + 1).toLowerCase(Locale.ROOT); }
+    private String createName(String ext) { String id=UUID.randomUUID().toString(); int h=id.hashCode(); return "/blogs/"+(h&15)+"/"+((h>>4)&15)+"/"+id+"."+ext; }
+    private String normalizeName(String name) {
+        if (name == null) return null;
+        String v=name.trim().replace('\\','/'); if(v.startsWith("/imgs/")) v=v.substring(5);
+        if(!v.startsWith("/blogs/") || v.contains("..")) return null;
+        return v.matches("/blogs/[0-9]+/[0-9]+/[0-9a-fA-F-]+\\.(jpg|jpeg|png|webp)") ? v : null;
     }
 }

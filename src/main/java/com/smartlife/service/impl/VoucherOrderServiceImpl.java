@@ -1,29 +1,36 @@
 package com.smartlife.service.impl;
 import cn.hutool.core.bean.BeanUtil;
 import com.smartlife.dto.Result;
+import com.smartlife.dto.VoucherOrderDetailDTO;
 import com.smartlife.config.RedisStreamInitializer;
+import com.smartlife.entity.Voucher;
 import com.smartlife.entity.VoucherOrder;
 import com.smartlife.mapper.VoucherOrderMapper;
 import com.smartlife.service.ISeckillVoucherService;
 import com.smartlife.service.IVoucherOrderService;
+import com.smartlife.service.IVoucherService;
+import com.smartlife.service.SeckillOrderPersistenceService;
+import com.smartlife.entity.SeckillVoucher;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.smartlife.utils.RedisIdWorker;
 import com.smartlife.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
-import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.connection.stream.*;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import javax.annotation.Resource;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -41,9 +48,23 @@ import java.util.concurrent.Executors;
 @Service
 @Slf4j
 public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, VoucherOrder> implements IVoucherOrderService {
+    private static final int PAYMENT_TIMEOUT_MINUTES = 5;
+    private static final int NORMAL_ORDER_LOCK_COUNT = 256;
+    private final Object[] normalOrderLocks = createNormalOrderLocks();
+
+    private static Object[] createNormalOrderLocks() {
+        Object[] locks = new Object[NORMAL_ORDER_LOCK_COUNT];
+        for (int i = 0; i < locks.length; i++) {
+            locks[i] = new Object();
+        }
+        return locks;
+    }
+
     //这里的针对的秒杀优惠券
     @Resource
     private ISeckillVoucherService iSeckillVoucherService;
+    @Resource
+    private IVoucherService voucherService;
     @Autowired
     private RedisIdWorker redisIdWorker;
     @Resource
@@ -51,7 +72,8 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @Resource
     private RedisStreamInitializer redisStreamInitializer;
     //将代理对象定义成员变量
-    private  IVoucherOrderService proxy;
+    @Resource
+    private SeckillOrderPersistenceService seckillOrderPersistenceService;
 
     //准备线程池  一个单线程就行因为符合条件的时候要另外开启一个线程去执行下单操作
     private static final ExecutorService SECKILL_ORDER_EXECUTOR= Executors.newSingleThreadExecutor();
@@ -90,9 +112,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
                     MapRecord<String, Object, Object> record = list.get(0);
                     Map<Object, Object> value = record.getValue();
                     VoucherOrder voucherOrder = BeanUtil.fillBeanWithMap(value, new VoucherOrder(), true);
-                    //3.ACK确认 XACK stream.order g1 id
-                    stringRedisTemplate.opsForStream().acknowledge(queueName,"g1",record.getId());
-                    handleVoucherOrder(voucherOrder);
+                    persistThenAcknowledge(queueName, record, voucherOrder);
                 } catch (Exception e) {
                     log.error("seckill order stream consume failed,queueName={},consumerGroup={},consumer={},errorType={},error={}",
                             queueName, "g1", "c1", e.getClass().getSimpleName(), e.getMessage(), e);
@@ -123,9 +143,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
                     MapRecord<String, Object, Object> record = list.get(0);
                     Map<Object, Object> value = record.getValue();
                     VoucherOrder voucherOrder = BeanUtil.fillBeanWithMap(value, new VoucherOrder(), true);
-                    //3.ACK确认 XACK stream.order g1 id
-                    stringRedisTemplate.opsForStream().acknowledge(queueName,"g1",record.getId());
-                    handleVoucherOrder(voucherOrder);
+                    persistThenAcknowledge(queueName, record, voucherOrder);
                 } catch (Exception e) {
                     log.error("seckill order pending-list consume failed,queueName={},consumerGroup={},consumer={},errorType={},error={}",
                             queueName, "g1", "c1", e.getClass().getSimpleName(), e.getMessage(), e);
@@ -163,7 +181,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         //1.获取用户
         Long userId = voucherOrder.getUserId();
         //2.创建锁对象
-        String lockKey = "locl:order" + userId;
+        String lockKey = "lock:order:" + userId;
         RLock lock = redissonClient.getLock(lockKey);
         //3.获取锁
         boolean isLock = lock.tryLock();
@@ -171,10 +189,10 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         if(!isLock){
             log.warn("seckill duplicate order blocked,userId={},voucherId={},orderId={},lockKey={}",
                     userId, voucherOrder.getVoucherId(), voucherOrder.getId(), lockKey);
-            return;
+            throw new IllegalStateException("Seckill order lock is busy");
         }
         try {
-            proxy.createVoucherOrder(voucherOrder);
+            seckillOrderPersistenceService.persist(voucherOrder);
         } catch (Exception e) {
             log.error("seckill order create failed,userId={},voucherId={},orderId={},errorType={},error={}",
                     userId, voucherOrder.getVoucherId(), voucherOrder.getId(),
@@ -195,7 +213,15 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     }
     //用改造后的lua脚本+消息队列实现优惠券秒杀
     public Result seckillVoucher(Long voucherId){
-        proxy=(IVoucherOrderService) AopContext.currentProxy();
+       Voucher voucher = voucherService.getById(voucherId);
+       if (voucher == null) return Result.fail("优惠券不存在");
+       if (!Integer.valueOf(1).equals(voucher.getType())) return Result.fail("非秒杀券不能走秒杀接口");
+       if (!Integer.valueOf(1).equals(voucher.getStatus())) return Result.fail("优惠券已下架");
+       SeckillVoucher activity = iSeckillVoucherService.getById(voucherId);
+       if (activity == null) return Result.fail("秒杀活动不存在");
+       LocalDateTime now = LocalDateTime.now();
+       if (activity.getBeginTime() != null && now.isBefore(activity.getBeginTime())) return Result.fail("秒杀尚未开始");
+       if (activity.getEndTime() != null && now.isAfter(activity.getEndTime())) return Result.fail("秒杀已结束");
        //获取用户id因为执行lua脚本需要这个参数
        Long userId=UserHolder.getUser().getId();
        //1.执行lua脚本(进行传参) 得到有没有购买的资格如果有资格向消息队列中发送消息
@@ -219,12 +245,187 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         //2.判断结果是否为0
         //将String类型转int型之后再做判断
         int r=result.intValue();
-        if(r!=0){
-            //3.非0就返回异常信息 1 2
-            return Result.fail(r==1?"库存不足":"不能重复下单");
+//        if(r!=0){
+//            //3.非0就返回异常信息 1 2
+//            return Result.fail(r==1?"库存不足":"不能重复下单");
+//        }
+        if (r != 0) {
+            log.warn("seckill lua rejected,userId={},voucherId={},orderId={},result={}",
+                    userId, voucherId, orderId, r);
+            return Result.fail(r == 1 ? "库存不足" : "不能重复下单");
         }
         //4.返回订单id
-        return Result.ok(orderId);
+        // Order IDs exceed JavaScript's safe integer range; keep them lossless in JSON.
+        return Result.ok(String.valueOf(orderId));
+    }
+    void persistThenAcknowledge(String queueName, MapRecord<String, Object, Object> record,
+                                VoucherOrder voucherOrder) {
+        handleVoucherOrder(voucherOrder);
+        stringRedisTemplate.opsForStream().acknowledge(queueName, "g1", record.getId());
+    }
+
+    @Override
+    public Result createNormalOrder(Long voucherId) {
+        Voucher voucher = voucherService.getById(voucherId);
+        if (voucher == null) {
+            return Result.fail("优惠券不存在");
+        }
+        if (!Integer.valueOf(0).equals(voucher.getType())) {
+            return Result.fail("秒杀券不能通过普通券接口购买");
+        }
+        if (!Integer.valueOf(1).equals(voucher.getStatus())) {
+            return Result.fail("优惠券已下架");
+        }
+
+        Long userId = UserHolder.getUser().getId();
+        int lockIndex = (Long.hashCode(userId) * 31 + Long.hashCode(voucherId)) &
+                (NORMAL_ORDER_LOCK_COUNT - 1);
+        synchronized (normalOrderLocks[lockIndex]) {
+            // Cancelled/refunded normal vouchers may be purchased again; only 1/2 remain active.
+            baseMapper.cancelExpiredForVoucher(userId, voucherId);
+            Long existingOrderId = baseMapper.selectActiveOrderId(userId, voucherId);
+            if (existingOrderId != null) {
+                return Result.ok(String.valueOf(existingOrderId));
+            }
+
+            long orderId = redisIdWorker.nextId("order");
+            VoucherOrder order = new VoucherOrder()
+                    .setId(orderId)
+                    .setUserId(userId)
+                    .setVoucherId(voucherId)
+                    .setPayType(1)
+                    .setStatus(1);
+            save(order);
+            return Result.ok(String.valueOf(orderId));
+        }
+    }
+
+    @Override
+    public Result queryOrderDetail(Long orderId) {
+        Long userId = UserHolder.getUser().getId();
+        VoucherOrderDetailDTO detail = baseMapper.selectDetailForUser(orderId, userId);
+        if (detail != null && Integer.valueOf(1).equals(detail.getStatus()) &&
+                isExpired(detail, LocalDateTime.now())) {
+            baseMapper.cancelUnpaid(orderId, userId);
+            detail = baseMapper.selectDetailForUser(orderId, userId);
+        }
+        return detail == null ? Result.fail("订单不存在或无权访问") : Result.ok(detail);
+    }
+
+    @Override
+    public Result mockPay(Long orderId) {
+        Long userId = UserHolder.getUser().getId();
+        VoucherOrderDetailDTO detail = baseMapper.selectDetailForUser(orderId, userId);
+        if (detail == null) {
+            return Result.fail("订单不存在或无权访问");
+        }
+        if (Integer.valueOf(2).equals(detail.getStatus())) {
+            return Result.ok(detail);
+        }
+        if (!Integer.valueOf(1).equals(detail.getStatus())) {
+            return Result.fail("当前订单状态不可支付");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        if (isExpired(detail, now)) {
+            baseMapper.cancelUnpaid(orderId, userId);
+            VoucherOrderDetailDTO latest = baseMapper.selectDetailForUser(orderId, userId);
+            if (latest != null && Integer.valueOf(2).equals(latest.getStatus())) {
+                return Result.ok(latest);
+            }
+            return Result.fail("订单已超时取消");
+        }
+
+        int updated = baseMapper.markPaid(orderId, userId, now);
+        VoucherOrderDetailDTO paid = baseMapper.selectDetailForUser(orderId, userId);
+        if (updated == 0 && (paid == null || !Integer.valueOf(2).equals(paid.getStatus()))) {
+            return Result.fail("当前订单状态不可支付");
+        }
+        return Result.ok(paid);
+    }
+
+    @Override
+    public Result cancelOrder(Long orderId) {
+        Long userId = UserHolder.getUser().getId();
+        VoucherOrderDetailDTO detail = baseMapper.selectDetailForUser(orderId, userId);
+        if (detail == null) {
+            return Result.fail("订单不存在或无权访问");
+        }
+        if (Integer.valueOf(4).equals(detail.getStatus())) {
+            return Result.ok(detail);
+        }
+        if (!Integer.valueOf(1).equals(detail.getStatus())) {
+            return Result.fail("当前订单状态不可取消");
+        }
+
+        int updated = baseMapper.cancelUnpaid(orderId, userId);
+        VoucherOrderDetailDTO latest = baseMapper.selectDetailForUser(orderId, userId);
+        if (updated == 0 && (latest == null || !Integer.valueOf(4).equals(latest.getStatus()))) {
+            return Result.fail("当前订单状态不可取消");
+        }
+        return Result.ok(latest);
+    }
+
+    @Override
+    public Result refundOrder(Long orderId) {
+        Long userId = UserHolder.getUser().getId();
+        VoucherOrderDetailDTO detail = baseMapper.selectDetailForUser(orderId, userId);
+        if (detail == null) {
+            return Result.fail("订单不存在或无权访问");
+        }
+        if (Integer.valueOf(6).equals(detail.getStatus())) {
+            return Result.ok(detail);
+        }
+        if (Integer.valueOf(3).equals(detail.getStatus())) {
+            return Result.fail("已核销订单不能退款");
+        }
+        if (!Integer.valueOf(2).equals(detail.getStatus()) &&
+                !Integer.valueOf(5).equals(detail.getStatus())) {
+            return Result.fail("当前订单状态不可退款");
+        }
+
+        if (Integer.valueOf(2).equals(detail.getStatus())) {
+            baseMapper.markRefunding(orderId, userId);
+        }
+        baseMapper.markRefunded(orderId, userId, LocalDateTime.now());
+        VoucherOrderDetailDTO latest = baseMapper.selectDetailForUser(orderId, userId);
+        if (latest == null || (!Integer.valueOf(5).equals(latest.getStatus()) &&
+                !Integer.valueOf(6).equals(latest.getStatus()))) {
+            return Result.fail("当前订单状态不可退款");
+        }
+        return Result.ok(latest);
+    }
+
+    @Override
+    public Result queryMyOrders(Integer current, Integer size, Integer status) {
+        if (current == null || current < 1 || size == null || size < 1 || size > 100) {
+            return Result.fail("分页参数不合法");
+        }
+        if (status != null && (status < 1 || status > 6)) {
+            return Result.fail("订单状态不合法");
+        }
+        Long userId = UserHolder.getUser().getId();
+        baseMapper.cancelExpiredForUser(userId);
+        long total = baseMapper.countUserOrders(userId, status);
+        long offset = (long) (current - 1) * size;
+        List<VoucherOrderDetailDTO> orders = baseMapper.selectUserOrders(userId, status, offset, size);
+        return Result.ok(orders, total);
+    }
+
+    @Scheduled(fixedDelay = 30000L)
+    public void cancelExpiredOrders() {
+        int count = baseMapper.cancelAllExpiredUnpaid();
+        if (count > 0) {
+            log.info("expired voucher orders cancelled,count={}", count);
+        }
+    }
+
+    private boolean isExpired(VoucherOrderDetailDTO detail, LocalDateTime now) {
+        LocalDateTime expireTime = detail.getExpireTime();
+        if (expireTime == null && detail.getCreateTime() != null) {
+            expireTime = detail.getCreateTime().plusMinutes(PAYMENT_TIMEOUT_MINUTES);
+        }
+        return expireTime != null && now.isAfter(expireTime);
     }
     //用lua脚本进行能否成功下单的判断
 //   public Result seckillVoucher(Long voucherId){
@@ -263,7 +464,10 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 //
 //    }
     @Override
-   public  void createVoucherOrder(VoucherOrder voucherOrder){
+    @Transactional(rollbackFor = Exception.class)
+    public  void createVoucherOrder(VoucherOrder voucherOrder){
+       // Seckill eligibility is lifetime-per-voucher for this MVP. Cancel/refund never restores
+       // Redis stock, MySQL stock, or the Lua one-user-one-order marker.
        //5.一人一单 子线程只能从订单中获得用户id
        Long userId =voucherOrder.getUserId();
        //5.1 查询订单

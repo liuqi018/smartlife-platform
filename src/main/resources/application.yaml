@@ -5,13 +5,13 @@ spring:
     name: smartlife
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3307/hmdp?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&characterEncoding=utf8
-    username: root
-    password: 1234
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3307/hmdp_benchmark?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&characterEncoding=utf8}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:1234}
   redis:
     host: 127.0.0.1
     port: 6379
-    password: 1234
+    password: ${REDIS_PASSWORD:1234}
     database: 0
     lettuce:
       pool:
@@ -37,17 +37,39 @@ management:
       show-details: always
 
 fault:
-  redis-enabled: true
+  enabled: ${FAULT_ENABLED:false}
+  redis-enabled: ${FAULT_REDIS_ENABLED:false}
 
   cpu:
     threads: 0
     target-usage: 1.0
     oversubscribe-ratio: 1.25
   oom:
-    enabled: true
+    enabled: ${FAULT_OOM_ENABLED:false}
     block-size: 8388608
     allocation-interval-millis: 200
     target-heap-usage: 0.93
-  mysql-slow-enabled: true
+  mysql-slow-enabled: ${FAULT_MYSQL_SLOW_ENABLED:false}
   mysql-slow-millis: 3000
   mysql-slow-interval-millis: 200
+
+ai:
+  enabled: true
+  base-url: https://www.autodl.art/api/v1
+  api-key: ${AI_API_KEY:}
+  model: qwen3.7-max
+  max-tool-rounds: 5
+  timeout-seconds: 30
+  conversation-ttl-minutes: 60
+  max-conversation-messages: 20
+
+demo:
+  city-name: 南京
+  display-name: 南京信息工程大学周边
+  longitude: 118.71111
+  latitude: 32.20573
+
+# Local hot-cache breakdown test endpoints. Keep disabled outside explicit local tests.
+shop:
+  cache-test:
+    enabled: ${SHOP_CACHE_TEST_ENABLED:false}

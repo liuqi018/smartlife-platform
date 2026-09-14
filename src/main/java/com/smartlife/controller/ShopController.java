@@ -8,6 +8,12 @@ import com.smartlife.entity.Shop;
 import com.smartlife.service.IShopService;
 import com.smartlife.utils.SystemConstants;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.validation.annotation.Validated;
+
+import javax.validation.constraints.DecimalMax;
+import javax.validation.constraints.DecimalMin;
+import javax.validation.constraints.Max;
+import javax.validation.constraints.Min;
 
 import javax.annotation.Resource;
 
@@ -21,6 +27,7 @@ import javax.annotation.Resource;
  */
 @RestController
 @RequestMapping("/shop")
+@Validated
 public class ShopController {
 
     @Resource
@@ -93,5 +100,23 @@ public class ShopController {
                 .page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
         // 返回数据
         return Result.ok(page.getRecords());
+    }
+
+    @GetMapping("/nearby")
+    public Result queryNearbyShops(
+            @RequestParam("x")
+            @DecimalMin(value = "-180", message = "x must be between -180 and 180")
+            @DecimalMax(value = "180", message = "x must be between -180 and 180") Double x,
+            @RequestParam("y")
+            @DecimalMin(value = "-90", message = "y must be between -90 and 90")
+            @DecimalMax(value = "90", message = "y must be between -90 and 90") Double y,
+            @RequestParam(value = "radius", defaultValue = "5000")
+            @DecimalMin(value = "1", message = "radius must be between 1 and 50000")
+            @DecimalMax(value = "50000", message = "radius must be between 1 and 50000") Double radius,
+            @RequestParam(value = "typeId", required = false) @Min(value = 1, message = "typeId must be positive") Long typeId,
+            @RequestParam(value = "limit", defaultValue = "50")
+            @Min(value = 1, message = "limit must be between 1 and 100")
+            @Max(value = 100, message = "limit must be between 1 and 100") Integer limit) {
+        return Result.ok(shopService.queryNearbyShops(x, y, radius, typeId, limit));
     }
 }
