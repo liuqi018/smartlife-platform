@@ -17,7 +17,7 @@ public class AgentController {
     private final AgentService agentService;
     public AgentController(AgentService agentService){this.agentService=agentService;}
 
-    @PostMapping("/chat")
+    @PostMapping(value="/chat", produces = "application/json;charset=UTF-8")
     public Result chat(@Valid @RequestBody AgentChatRequest request){
         UserDTO user= UserHolder.getUser();
         return Result.ok(agentService.chat(request,user==null?null:user.getId()));

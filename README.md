@@ -68,6 +68,21 @@ curl -X POST http://localhost:8081/api/agent/chat \
 | `get_shop_detail` | 通过现有商户缓存逻辑查询指定商户 |
 | `search_shop_blogs` | 按商户 ID 或关键词查询探店笔记 |
 | `get_available_vouchers` | 查询商户有效优惠券，并过滤不可用秒杀券 |
+| `get_my_shop_order_overview` | 当前登录经营者店铺的代金券订单数量、当前状态、创建趋势和上一等长周期对比 |
+| `get_my_shop_voucher_ranking` | 当前登录经营者店铺的代金券订单排行和各券当前状态数量 |
+
+### 商家端代金券订单分析
+
+先在当前数据库执行 `src/main/resources/db/shop_owner_order_analysis.sql`。该脚本只创建独立的 `tb_shop_owner` 表，不修改原有店铺或订单。第一版一个账号只绑定一家店铺；未绑定的账号调用两个统计工具会得到明确错误。归属只能由可信的数据库管理操作指定，不提供用户自行认领店铺的 API。例如，在确认用户和店铺身份后：
+
+```sql
+INSERT INTO tb_shop_owner (shop_id, owner_user_id)
+SELECT 15, id FROM tb_user WHERE phone = '已验证的商家手机号';
+```
+
+请先确认该手机号对应且仅对应目标账号、店铺 15 确实是其经营店铺；演示可使用现有短信验证码登录创建账号。然后由另一个测试用户通过已有 `POST /voucher-order/normal/{voucherId}` 购买该店铺的一张普通券，例如初始化数据中店铺 15 的券 2；需要测试已支付状态时再调用现有 `POST /voucher-order/{orderId}/mock-pay`。这只是模拟支付，不代表真实收款。秒杀订单也会按其券所属店铺计入统计。
+
+登录已绑定的账号后，可以在现有 `POST /agent/chat` 中提问“本周店铺代金券订单与上一等长时段相比怎么样？”、“最近 30 天订单趋势怎么样？”或“哪个优惠券产生的订单最多？”。模型只选择工具并解释结果；工具参数不接受用户或店铺 ID，后端从登录身份和 `tb_shop_owner` 确定访问范围。订单按创建时间归入期间，状态是查询时的当前状态，数据只覆盖平台内代金券订单。两个工具不提供营业额、销售额、净收入或财务指标。
 
 ### 安全限制
 

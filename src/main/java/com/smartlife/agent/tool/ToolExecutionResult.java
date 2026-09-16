@@ -14,8 +14,18 @@ public class ToolExecutionResult {
     private JsonNode data;
     private int resultCount;
     private List<ShopToolDto> shops;
+    /** A successful aggregate with zero rows is still evidence for an answer. */
+    private boolean validEmptyResult;
 
     public ToolExecutionResult(JsonNode data, int resultCount) {
-        this(data, resultCount, Collections.emptyList());
+        this(data, resultCount, Collections.emptyList(), false);
+    }
+
+    public ToolExecutionResult(JsonNode data, int resultCount, List<ShopToolDto> shops) {
+        this(data, resultCount, shops, false);
+    }
+
+    public ToolExecutionResult(JsonNode data, int resultCount, boolean validEmptyResult) {
+        this(data, resultCount, Collections.emptyList(), validEmptyResult);
     }
 }

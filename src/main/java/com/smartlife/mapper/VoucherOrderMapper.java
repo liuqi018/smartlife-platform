@@ -3,6 +3,9 @@ package com.smartlife.mapper;
 import com.smartlife.entity.VoucherOrder;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.smartlife.dto.VoucherOrderDetailDTO;
+import com.smartlife.agent.dto.OrderStatusCounts;
+import com.smartlife.agent.dto.OrderTrendRow;
+import com.smartlife.agent.dto.VoucherRankingRow;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
@@ -86,5 +89,39 @@ public interface VoucherOrderMapper extends BaseMapper<VoucherOrder> {
             "WHERE user_id = #{userId} " +
             "<if test='status != null'>AND status = #{status}</if></script>")
     long countUserOrders(@Param("userId") Long userId, @Param("status") Integer status);
+
+    // The ownership join is part of every aggregate, not merely a Java pre-check.
+    @Select("SELECT COUNT(*) AS totalOrders, " +
+            "COALESCE(SUM(o.status = 1),0) AS unpaidOrders, COALESCE(SUM(o.status = 2),0) AS paidOrders, " +
+            "COALESCE(SUM(o.status = 3),0) AS usedOrders, COALESCE(SUM(o.status = 4),0) AS cancelledOrders, " +
+            "COALESCE(SUM(o.status = 5),0) AS refundingOrders, COALESCE(SUM(o.status = 6),0) AS refundedOrders " +
+            "FROM tb_shop_owner so JOIN tb_voucher v ON v.shop_id = so.shop_id " +
+            "JOIN tb_voucher_order o ON o.voucher_id = v.id " +
+            "WHERE so.owner_user_id = #{userId} AND so.shop_id = #{shopId} " +
+            "AND o.create_time >= #{start} AND o.create_time < #{end}")
+    OrderStatusCounts countShopOrders(@Param("userId") Long userId, @Param("shopId") Long shopId,
+            @Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
+    @Select("SELECT DATE_FORMAT(o.create_time, '%Y-%m-%d') AS day, COUNT(*) AS orderCount " +
+            "FROM tb_shop_owner so JOIN tb_voucher v ON v.shop_id = so.shop_id " +
+            "JOIN tb_voucher_order o ON o.voucher_id = v.id " +
+            "WHERE so.owner_user_id = #{userId} AND so.shop_id = #{shopId} " +
+            "AND o.create_time >= #{start} AND o.create_time < #{end} " +
+            "GROUP BY DATE_FORMAT(o.create_time, '%Y-%m-%d') ORDER BY day")
+    List<OrderTrendRow> shopOrderDailyTrend(@Param("userId") Long userId, @Param("shopId") Long shopId,
+            @Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
+    @Select("SELECT v.id AS voucherId, v.title AS voucherTitle, v.type AS voucherType, " +
+            "COUNT(*) AS totalOrders, COALESCE(SUM(o.status = 1),0) AS unpaidOrders, " +
+            "COALESCE(SUM(o.status = 2),0) AS paidOrders, COALESCE(SUM(o.status = 3),0) AS usedOrders, " +
+            "COALESCE(SUM(o.status = 4),0) AS cancelledOrders, COALESCE(SUM(o.status = 5),0) AS refundingOrders, " +
+            "COALESCE(SUM(o.status = 6),0) AS refundedOrders " +
+            "FROM tb_shop_owner so JOIN tb_voucher v ON v.shop_id = so.shop_id " +
+            "JOIN tb_voucher_order o ON o.voucher_id = v.id " +
+            "WHERE so.owner_user_id = #{userId} AND so.shop_id = #{shopId} " +
+            "AND o.create_time >= #{start} AND o.create_time < #{end} " +
+            "GROUP BY v.id, v.title, v.type ORDER BY totalOrders DESC, v.id ASC LIMIT #{limit}")
+    List<VoucherRankingRow> shopVoucherRanking(@Param("userId") Long userId, @Param("shopId") Long shopId,
+            @Param("start") LocalDateTime start, @Param("end") LocalDateTime end, @Param("limit") int limit);
 
 }

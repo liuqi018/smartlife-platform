@@ -42,7 +42,7 @@ public class AgentService {
                 if(call.getCallId()==null||call.getCallId().trim().isEmpty())throw new AgentException("model tool call is missing call_id");
                 ToolExecutionResult result=tools.execute(call.getName(),call.getArguments(),new ToolExecutionContext(userId,request.getLongitude(),request.getLatitude()));
                 toolOutputs.add(new AiMessage("tool",result.getData().toString(),call.getCallId()));records.add(new ToolCallRecord(call.getName(),call.getArguments(),true,result.getResultCount()));
-                anyToolResult|=result.getResultCount()>0;for(ShopToolDto shop:result.getShops())recommended.put(shop.getId(),shop);
+                anyToolResult|=result.getResultCount()>0||result.isValidEmptyResult();for(ShopToolDto shop:result.getShops())recommended.put(shop.getId(),shop);
             }
             if(response.getResponseId()==null||response.getResponseId().trim().isEmpty())throw new AgentException("model tool response is missing response id");
             previousResponseId=response.getResponseId();modelInput=toolOutputs;
